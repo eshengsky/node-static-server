@@ -1,7 +1,7 @@
 /**
  * node-static-server
- * Node静态资源服务器的实现
- * Copyright(c) 2016 Sky <eshengsky@163.com>
+ * 基于Node.js的静态资源服务器
+ * Copyright(c) 2016 Sky.Sun <eshengsky@163.com>
  * MIT Licensed
  */
 
@@ -14,13 +14,13 @@ const http = require('http'),
     zlib = require("zlib"),
     crypto = require("crypto"),
     mime = require('mime'),
-    config = require('./config');
+    {config} = require('./config');
 
-var port = config.port;
 http.createServer((req, res) => {
     // 只允许GET请求方式
-    if (req.method.toLowerCase() !== 'get') {
-        return err403();
+    if (req.method !== 'GET') {
+        console.warn(`400 错误的请求！Url：${req.url} Method: ${req.method}`);
+        return errorHandler(400);
     }
     // 获取原始URL
     var originalUrl = req.url;
@@ -39,24 +39,18 @@ http.createServer((req, res) => {
                 return path.extname(item) === '.css';
             });
         if (!isAllJs && !isAllCss) {
-            return err400();
+            console.warn(`400 错误的请求！Url：${req.url} Method: ${req.method}`);
+            return errorHandler(400);
         }
-        let asyncCounter = 0;
-        let data = [];
-        pathNames.forEach(pathName => {
-            getSingleFileStatus(pathName, (code, stats, fileName) => {
-                asyncCounter++;
-                data.push({code, stats, fileName});
-                // 确保已拿到所有数据
-                if (asyncCounter === pathNames.length) {
-                    handleMultiFiles(data);
-                }
-            })
-        })
+
+        let promises = pathNames.map(item => getSingleFileStatus(item));
+        Promise.all(promises).then(data => {
+            handleMultiFiles(data, isAllJs ? '.js' : '.css');
+        }, error => errorHandler(error));
     }
     // 单文件请求
     else {
-        getSingleFileStatus(pathName, (code, stats, fileName) => {
+        getSingleFileStatus(pathName).then(({code, stats, fileName}) => {
             switch (code) {
                 case 200:
                     setHeaders(stats, fileName);
@@ -80,44 +74,66 @@ http.createServer((req, res) => {
                     res.writeHead(304);
                     res.end();
                     break;
-                case 403:
-                    err403();
-                    break;
-                case 404:
-                    err404();
-                    break;
-                case 500:
-                    err500();
-                    break;
             }
-        })
+        }, error => errorHandler(error));
+    }
+
+    /**
+     * 获取文件的状态
+     * @param pathName
+     */
+    function getSingleFileStatus(pathName) {
+        return new Promise((resolve, reject) => {
+            // 根据路径名得到将要读取的本地文件名
+            var fileName = path.join(config.assets, pathName);
+            // 获取文件信息
+            fs.stat(fileName, (err, stats) => {
+                if (err) {
+                    // 文件不存在
+                    if (err.code === 'ENOENT') {
+                        console.warn(`404 文件不存在！文件路径：${fileName}`);
+                        return reject(404);
+                    }
+                    // 其它错误
+                    else {
+                        console.error(`500 服务器错误！错误信息：${err.message}`);
+                        return reject(500);
+                    }
+                } else {
+                    // 是一个文件
+                    if (stats.isFile()) {
+                        // 上次修改时间
+                        let lastModified = stats.mtime.toUTCString();
+                        // 生成Etag
+                        let etagStr = [stats.ino, stats.mtime.toUTCString(), stats.size].join('-');
+                        let etag = crypto.createHash('sha1').update(etagStr).digest('base64');
+                        // 如果文件未修改则返回304
+                        if (req.headers['if-modified-since'] === lastModified && req.headers['if-none-match'] === etag) {
+                            return resolve({
+                                code: 304, stats, fileName
+                            });
+                        }
+                        return resolve({
+                            code: 200, stats, fileName
+                        });
+                    }
+                    // 不是文件，是目录或者别的
+                    else {
+                        console.error(`403 禁止访问！${fileName}`);
+                        return reject(403);
+                    }
+                }
+            });
+        });
     }
 
     /**
      * 处理多文件请求
      * @param data
+     * @param ext
      * @returns {*}
      */
-    function handleMultiFiles(data) {
-        // 包含了403错误
-        if (data.some((item)=> {
-                return item.code === 403
-            })) {
-            return err403();
-        }
-        // 包含了404错误
-        if (data.some((item)=> {
-                return item.code === 404
-            })) {
-            return err404();
-        }
-        // 包含了500错误
-        if (data.some((item)=> {
-                return item.code === 500
-            })) {
-            return err500();
-        }
-
+    function handleMultiFiles(data, ext) {
         // 得到一个stats数组
         let multiStats = data.map(item => item.stats);
         // 生成多文件情况下的ino, size
@@ -150,75 +166,39 @@ http.createServer((req, res) => {
         }
 
         // 判断是否支持Gzip
-        let ext = isAllJs ? '.js' : '.css';
         let enableGzipFile = config.gzipTypes.test(ext);
 
-        // 合并多文件的可读流到PT
-        let streamArray = data.map(item => fs.createReadStream(item.fileName));
-        let passThrough = new PassThrough();
-        let waiting = streamArray.length;
-        for (let stream of streamArray) {
-            passThrough = stream.pipe(passThrough, {end: false});
-            stream.once('end', () => --waiting === 0 && passThrough.emit('end'))
-        }
+        // 生成一个可读流数组
+        let streams = data.map(item => fs.createReadStream(item.fileName));
+        // 合并多个可读流
+        let batchStream = streams.reduce((prev, cur, i, arr) => {
+            cur.on('end', () => {
+                // 可读流已全部导入PT
+                if (i === arr.length - 1) {
+                    prev.emit('end')
+                }
+            });
+            return cur.pipe(prev, {end: false})
+        }, new PassThrough());
 
         // 如果文件支持gzip压缩则压缩后发给客户端
         if (enableGzipFile && enableGzipHeader) {
             res.setHeader('Content-Encoding', 'gzip');
             res.writeHead(200);
-            passThrough.pipe(zlib.createGzip()).pipe(res);
+            batchStream.pipe(zlib.createGzip()).pipe(res);
         }
         // 否则读取未压缩文件给客户端
         else {
             res.writeHead(200);
-            passThrough.pipe(res);
+            batchStream.pipe(res);
         }
     }
 
     /**
-     * 获取文件的状态
-     * @param pathName
-     * @param callback
+     * 设置消息头
+     * @param stats
+     * @param fileName
      */
-    function getSingleFileStatus(pathName, callback) {
-        // 根据路径名得到将要读取的本地文件名
-        var fileName = path.join(config.assets, pathName);
-        // 获取文件信息
-        fs.stat(fileName, (err, stats) => {
-            if (err) {
-                // 文件不存在
-                if (err.code === 'ENOENT') {
-                    console.warn('404 文件不存在：', fileName);
-                    return callback(404);
-                }
-                // 其它错误
-                else {
-                    console.error('500 服务器错误：', fileName);
-                    return callback(500);
-                }
-            } else {
-                // 是一个文件
-                if (stats.isFile()) {
-                    // 上次修改时间
-                    let lastModified = stats.mtime.toUTCString();
-                    // 生成Etag
-                    let etagStr = [stats.ino, stats.mtime.toUTCString(), stats.size].join('-');
-                    let etag = crypto.createHash('sha1').update(etagStr).digest('base64');
-                    // 如果文件未修改则返回304
-                    if (req.headers['if-modified-since'] === lastModified && req.headers['if-none-match'] === etag) {
-                        return callback(304, stats, fileName);
-                    }
-                    return callback(200, stats, fileName);
-                }
-                // 不是文件，是目录或者别的
-                else {
-                    console.error('403 非法访问：', fileName);
-                    return callback(403);
-                }
-            }
-        });
-    }
-
     function setHeaders(stats, fileName) {
         // 设置浏览器缓存过期时间
         var expires = new Date();
@@ -238,44 +218,28 @@ http.createServer((req, res) => {
     }
 
     /**
-     * 400错误处理
+     * 错误处理
+     * @param code
      */
-    function err400() {
-        res.writeHead(400, {
+    function errorHandler(code) {
+        res.writeHead(code, {
             'Content-Type': 'text/plain'
         });
-        res.end('400 Bad Request');
+        switch (code) {
+            case 400:
+                res.end('400 Bad Request');
+                break;
+            case 403:
+                res.end('403 Forbidden');
+                break;
+            case 404:
+                res.end('404 Not Found');
+                break;
+            case 500:
+                res.end('500 Internal Server Error');
+                break;
+        }
     }
+}).listen(config.port);
 
-    /**
-     * 403错误处理
-     */
-    function err403() {
-        res.writeHead(403, {
-            'Content-Type': 'text/plain'
-        });
-        res.end('403 Forbidden');
-    }
-
-    /**
-     * 404错误处理
-     */
-    function err404() {
-        res.writeHead(404, {
-            'Content-Type': 'text/plain'
-        });
-        res.end('404 Not Found');
-    }
-
-    /**
-     * 500错误处理
-     */
-    function err500() {
-        res.writeHead(500, {
-            'Content-Type': 'text/plain'
-        });
-        res.end('500 Internal Server Error');
-    }
-}).listen(port);
-
-console.info(`Static server is running at http://127.0.0.1:${port}`);
+console.info(`Static server is running at http://127.0.0.1:${config.port}`);

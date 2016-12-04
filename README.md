@@ -1,1 +1,1 @@
-# node-minify-server
+# node-static-server
