@@ -6,6 +6,9 @@ exports.config = {
     // 绑定端口
     port: 8080,
 
+    // 欢迎页面
+    welcome: 'Welcome to the node static server!',
+
     // 资源文件顶层目录
     assets: './assets/',
 
@@ -13,5 +16,5 @@ exports.config = {
     maxAge: 60 * 60 * 24 * 30,
 
     // gzip压缩文件的类型
-    gzipTypes: /js|css|html/i
+    gzipTypes: /js|css|html?/i
 };

@@ -22,13 +22,19 @@ http.createServer((req, res) => {
         console.warn(`400 错误的请求！Url：${req.url} Method: ${req.method}`);
         return errorHandler(400);
     }
+    // 响应是否支持Gzip压缩
+    var enableGzipHeader = /\bgzip\b/i.test(req.headers['accept-encoding'] || '');
     // 获取原始URL
     var originalUrl = req.url;
     // 从URL中获取路径名
     var pathName = url.parse(originalUrl).pathname;
+    // 如果是首页则显示welcome
+    if (pathName === '/') {
+        res.end(config.welcome);
+        return;
+    }
+    // 用逗号分割pathname
     var pathNames = pathName.split(',');
-    // 响应是否支持Gzip压缩
-    var enableGzipHeader = /\bgzip\b/i.test(req.headers['accept-encoding'] || '');
     // 多文件请求（只支持js和css）
     if (pathNames.length > 1) {
         // 是否每个请求都是js或每个请求都是css
@@ -144,7 +150,7 @@ http.createServer((req, res) => {
             sumSize += item.size;
         });
         // mtime取最后修改的那个文件的
-        let maxTime = Math.max.apply(null, multiStats.map(item => item.mtime));
+        let maxTime = Math.max(...multiStats.map(item => item.mtime));
         let mtime = new Date(maxTime);
         // ino取平均值
         let ino = sumIno / data.length;
@@ -168,30 +174,44 @@ http.createServer((req, res) => {
         // 判断是否支持Gzip
         let enableGzipFile = config.gzipTypes.test(ext);
 
-        // 生成一个可读流数组
-        let streams = data.map(item => fs.createReadStream(item.fileName));
-        // 合并多个可读流
-        let batchStream = streams.reduce((prev, cur, i, arr) => {
-            cur.on('end', () => {
-                // 可读流已全部导入PT
-                if (i === arr.length - 1) {
-                    prev.emit('end')
-                }
-            });
-            return cur.pipe(prev, {end: false})
-        }, new PassThrough());
+        // 生成多文件合并后的可读流
+        let combinedStreams = combineFileStreams(data.map(t => t.fileName));
 
         // 如果文件支持gzip压缩则压缩后发给客户端
         if (enableGzipFile && enableGzipHeader) {
             res.setHeader('Content-Encoding', 'gzip');
             res.writeHead(200);
-            batchStream.pipe(zlib.createGzip()).pipe(res);
+            combinedStreams.pipe(zlib.createGzip()).pipe(res);
         }
         // 否则读取未压缩文件给客户端
         else {
             res.writeHead(200);
-            batchStream.pipe(res);
+            combinedStreams.pipe(res);
         }
+    }
+
+    /**
+     * 合并多个文件的文件流到PassThrough
+     * @param files
+     */
+    function combineFileStreams(files) {
+        var fileIndex = -1,
+            rs,
+            pt = new PassThrough();
+        var next = () => {
+            fileIndex++;
+            rs = fs.createReadStream(files[fileIndex]);
+            rs.pipe(pt, {end: false});
+            rs.on('end', () => {
+                if (fileIndex < files.length - 1) {
+                    next();
+                } else {
+                    pt.emit('end');
+                }
+            });
+        };
+        next();
+        return pt;
     }
 
     /**
