@@ -14,7 +14,8 @@ const http = require('http'),
     zlib = require("zlib"),
     crypto = require("crypto"),
     mime = require('mime'),
-    {config} = require('./config');
+    // 配置文件路径支持从命令行参数读取，若未指定则读取./config
+    {config} = require(process.argv[2] || './config');
 
 http.createServer((req, res) => {
     // 只允许GET请求方式
