@@ -263,4 +263,4 @@ http.createServer((req, res) => {
     }
 }).listen(config.port);
 
-console.info(`Static server is running at http://127.0.0.1:${config.port}`);
+console.info(`Static server is running at http://${config.host}:${config.port}`);
