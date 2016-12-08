@@ -36,6 +36,8 @@ http.createServer((req, res) => {
     }
     // 用逗号分割pathname
     var pathNames = pathName.split(',');
+    // 过滤一下
+    pathNames = pathNames.filter(item => item);
     // 多文件请求（只支持js和css）
     if (pathNames.length > 1) {
         // 是否每个请求都是js或每个请求都是css
