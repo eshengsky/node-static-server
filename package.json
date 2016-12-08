@@ -4,7 +4,7 @@
   "description": "The static file server based on Node.js.",
   "main": "server.js",
   "scripts": {
-    "test": "npm test",
+    "test": "mocha",
     "start": "node server.js"
   },
   "repository": {
