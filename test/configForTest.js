@@ -20,7 +20,7 @@ exports.config = {
     /**
      * 资源文件最外层目录
      */
-    assets: './assetsForTest/',
+    assets: './test/assetsForTest/',
 
     /**
      * 缓存过期时间（单位秒）
