@@ -2,7 +2,7 @@
  * node-static-server
  * 基于Node.js的静态资源服务器
  * Copyright(c) 2016 Sky.Sun <eshengsky@163.com>
- * MIT Licensed
+ * MIT Licensed 
  */
 
 'use strict';
