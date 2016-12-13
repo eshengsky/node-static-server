@@ -3,6 +3,7 @@
  * 执行：npm test
  */
 
+'use strict';
 const assert = require('assert'),
     {spawn} = require('child_process'),
     http = require('http'),
@@ -52,7 +53,7 @@ describe('node-static-server测试脚本', () => {
     describe('创建服务器与显示欢迎页面', () => {
         it('要能正常创建服务器', done => {
             child.stdout.on('data', data => {
-                assert.equal(data, `Static server is running at ${website}\n`);
+                assert.equal(data.toString(), `Static server is running at ${website}\n`);
                 done();
             });
         });
@@ -76,7 +77,7 @@ describe('node-static-server测试脚本', () => {
             var etag = crypto.createHash('sha1').update(etagStr).digest('base64');
 
             it('应该返回200，当没有缓存时', done => {
-                request(url).then(({res, body}) => {
+                request(url).then(({res}) => {
                     assert.equal(res.statusCode, 200);
                     done();
                 })
