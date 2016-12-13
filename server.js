@@ -6,7 +6,9 @@
  */
 
 'use strict';
-const http = require('http'),
+const cluster = require('cluster'),
+    numCPUs = require('os').cpus().length,
+    http = require('http'),
     url = require('url'),
     fs = require('fs'),
     path = require('path'),
@@ -17,7 +19,23 @@ const http = require('http'),
     // 配置文件路径支持从命令行参数读取，若未指定则读取./config
     {config} = require(process.argv[2] || './config');
 
-http.createServer((req, res) => {
+if (cluster.isMaster) {
+    for (let i = 0; i < numCPUs; i++) {
+        cluster.fork();
+    }
+    console.info(`Static server is running at http://${config.host}:${config.port}`);
+} else {
+    http.createServer(serverHandler).listen(config.port);
+}
+
+/**
+ * 请求处理函数
+ * @param req
+ * @param res
+ * @returns {*}
+ * @constructor
+ */
+function serverHandler(req, res) {
     // 只允许GET请求方式
     if (req.method !== 'GET') {
         console.warn(`400 错误的请求！Url：${req.url} Method: ${req.method}`);
@@ -263,6 +281,4 @@ http.createServer((req, res) => {
                 break;
         }
     }
-}).listen(config.port);
-
-console.info(`Static server is running at http://${config.host}:${config.port}`);
+}
