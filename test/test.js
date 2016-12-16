@@ -38,10 +38,11 @@ var request = options => {
 
 describe('node-static-server测试脚本', () => {
     var child;
-    before(() => {
-        var configPath = path.join(__dirname, './configForTest.js')
+    before(done => {
+        var configPath = path.join(__dirname, './configForTest.js');
         child = spawn('node', ['server.js', configPath]);
         child.stderr.on('data', err => console.error(err.toString()));
+        child.stdout.on('data', data => done())
     });
 
     after(() => {
@@ -50,14 +51,7 @@ describe('node-static-server测试脚本', () => {
         }
     });
 
-    describe('创建服务器与显示欢迎页面', () => {
-        it('要能正常创建服务器', done => {
-            child.stdout.on('data', data => {
-                assert.equal(data.toString(), `Static server is running at ${website}\n`);
-                done();
-            });
-        });
-
+    describe('显示欢迎页面', () => {
         it('要能正常显示欢迎页面，当进入网站根路径时', done => {
             request(website).then(({res, body}) => {
                 assert.equal(body, config.welcome);
@@ -140,7 +134,7 @@ describe('node-static-server测试脚本', () => {
                 })
             });
 
-            it('要能获取到正确的消息头', done => {
+            it('要能获取到正确的消息头，当不支持Gzip压缩', done => {
                 request(url).then(({res}) => {
                     var expires = new Date();
                     expires.setTime(expires.getTime() + config.maxAge * 1000);
@@ -149,6 +143,28 @@ describe('node-static-server测试脚本', () => {
                     assert.equal(res.headers['cache-control'], "max-age=" + config.maxAge);
                     assert.equal(res.headers['last-modified'], lastModified);
                     assert.equal(res.headers['etag'], etag);
+                    assert.equal(res.headers['content-encoding'], undefined);
+                    done();
+                })
+            });
+
+            it('要能获取到正确的消息头，当支持Gzip压缩', done => {
+                request({
+                    host: config.host,
+                    port: config.port,
+                    path: '/js/test1.js',
+                    headers: {
+                        'accept-encoding': 'gzip, deflate, sdch, br'
+                    }
+                }).then(({res}) => {
+                    var expires = new Date();
+                    expires.setTime(expires.getTime() + config.maxAge * 1000);
+                    assert.equal(res.headers['content-type'], mime.lookup('.js'));
+                    assert.equal(res.headers['expires'], expires.toUTCString());
+                    assert.equal(res.headers['cache-control'], "max-age=" + config.maxAge);
+                    assert.equal(res.headers['last-modified'], lastModified);
+                    assert.equal(res.headers['etag'], etag);
+                    assert.equal(res.headers['content-encoding'], 'gzip');
                     done();
                 })
             });
@@ -262,7 +278,7 @@ describe('node-static-server测试脚本', () => {
                 })
             });
 
-            it('要能获取到正确的消息头', done => {
+            it('要能获取到正确的消息头，当不支持Gzip压缩', done => {
                 request(url).then(({res}) => {
                     var expires = new Date();
                     expires.setTime(expires.getTime() + config.maxAge * 1000);
@@ -271,6 +287,28 @@ describe('node-static-server测试脚本', () => {
                     assert.equal(res.headers['cache-control'], "max-age=" + config.maxAge);
                     assert.equal(res.headers['last-modified'], lastModified);
                     assert.equal(res.headers['etag'], etag);
+                    assert.equal(res.headers['content-encoding'], undefined);
+                    done();
+                })
+            });
+
+            it('要能获取到正确的消息头，当支持Gzip压缩', done => {
+                request({
+                    host: config.host,
+                    port: config.port,
+                    path: '/js/test1.js,/js/test2.js',
+                    headers: {
+                        'accept-encoding': 'gzip, deflate, sdch, br'
+                    }
+                }).then(({res}) => {
+                    var expires = new Date();
+                    expires.setTime(expires.getTime() + config.maxAge * 1000);
+                    assert.equal(res.headers['content-type'], mime.lookup('.js'));
+                    assert.equal(res.headers['expires'], expires.toUTCString());
+                    assert.equal(res.headers['cache-control'], "max-age=" + config.maxAge);
+                    assert.equal(res.headers['last-modified'], lastModified);
+                    assert.equal(res.headers['etag'], etag);
+                    assert.equal(res.headers['content-encoding'], 'gzip');
                     done();
                 })
             });
