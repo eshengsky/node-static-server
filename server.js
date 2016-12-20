@@ -14,6 +14,7 @@ const cluster = require('cluster'),
     fs = require('fs'),
     path = require('path'),
     {PassThrough} = require('stream'),
+    EventEmitter = require('events'),
     zlib = require("zlib"),
     crypto = require("crypto"),
     mime = require('mime'),
@@ -37,10 +38,60 @@ if (cluster.isMaster) {
  * @constructor
  */
 function serverHandler(req, res) {
+    class ResEmitter extends EventEmitter {
+    }
+    const resEmitter = new ResEmitter();
+
+    resEmitter.on('error', (code) => {
+        res.writeHead(code, {
+            'Content-Type': 'text/plain'
+        });
+        switch (code) {
+            case 400:
+                res.end('400 Bad Request');
+                break;
+            case 403:
+                res.end('403 Forbidden');
+                break;
+            case 404:
+                res.end('404 Not Found');
+                break;
+            case 500:
+                res.end('500 Internal Server Error');
+                break;
+        }
+    });
+
+    resEmitter.on('success', (code, stats, fileName, rs) => {
+        switch (code) {
+            case 200:
+                setHeaders(stats, fileName);
+                let ext = path.extname(fileName);
+                var enableGzipFile = config.gzipTypes.test(ext);
+                // 如果文件支持gzip压缩则压缩后发给客户端
+                if (enableGzipFile && enableGzipHeader) {
+                    res.setHeader('Content-Encoding', 'gzip');
+                    res.writeHead(200);
+                    rs.pipe(zlib.createGzip()).pipe(res);
+                }
+                // 否则读取未压缩文件给客户端
+                else {
+                    res.writeHead(200);
+                    rs.pipe(res);
+                }
+                break;
+            case 304:
+                setHeaders(stats, fileName);
+                res.writeHead(304);
+                res.end();
+                break;
+        }
+    });
+
     // 只允许GET请求方式
     if (req.method !== 'GET') {
         console.warn(`400 错误的请求！Url：${req.url} Method: ${req.method}`);
-        return errorHandler(400);
+        return resEmitter.emit('error', 400);
     }
     // 响应是否支持Gzip压缩
     var enableGzipHeader = /\bgzip\b/i.test(req.headers['accept-encoding'] || '');
@@ -68,42 +119,20 @@ function serverHandler(req, res) {
             });
         if (!isAllJs && !isAllCss) {
             console.warn(`400 错误的请求！Url：${req.url} Method: ${req.method}`);
-            return errorHandler(400);
+            return resEmitter.emit('error', 400);
         }
 
         let promises = pathNames.map(item => getSingleFileStatus(item));
         Promise.all(promises).then(data => {
             handleMultiFiles(data, isAllJs ? '.js' : '.css');
-        }, error => errorHandler(error));
+        }, error => resEmitter.emit('error', error));
     }
     // 单文件请求
     else {
         getSingleFileStatus(pathName).then(({code, stats, fileName}) => {
-            switch (code) {
-                case 200:
-                    setHeaders(stats, fileName);
-                    let rs = fs.createReadStream(fileName);
-                    let ext = path.extname(fileName);
-                    var enableGzipFile = config.gzipTypes.test(ext);
-                    // 如果文件支持gzip压缩则压缩后发给客户端
-                    if (enableGzipFile && enableGzipHeader) {
-                        res.setHeader('Content-Encoding', 'gzip');
-                        res.writeHead(200);
-                        rs.pipe(zlib.createGzip()).pipe(res);
-                    }
-                    // 否则读取未压缩文件给客户端
-                    else {
-                        res.writeHead(200);
-                        rs.pipe(res);
-                    }
-                    break;
-                case 304:
-                    setHeaders(stats, fileName);
-                    res.writeHead(304);
-                    res.end();
-                    break;
-            }
-        }, error => errorHandler(error));
+            var rs = code === 200 ? fs.createReadStream(fileName) : null;
+            resEmitter.emit('success', code, stats, fileName, rs)
+        }, error => resEmitter.emit('error', error));
     }
 
     /**
@@ -183,32 +212,13 @@ function serverHandler(req, res) {
         let etagStr = [ino, mtime.toUTCString(), size].join('-');
         let etag = crypto.createHash('sha1').update(etagStr).digest('base64');
 
-        // 设置报文头
-        setHeaders({mtime, ino, size}, data[0].fileName);
-
         // 如果文件未修改则返回304
         if (req.headers['if-modified-since'] === mtime.toUTCString() && req.headers['if-none-match'] === etag) {
-            res.writeHead(304);
-            res.end();
-            return;
-        }
-
-        // 判断是否支持Gzip
-        let enableGzipFile = config.gzipTypes.test(ext);
-
-        // 生成多文件合并后的可读流
-        let combinedStreams = combineFileStreams(data.map(t => t.fileName));
-
-        // 如果文件支持gzip压缩则压缩后发给客户端
-        if (enableGzipFile && enableGzipHeader) {
-            res.setHeader('Content-Encoding', 'gzip');
-            res.writeHead(200);
-            combinedStreams.pipe(zlib.createGzip()).pipe(res);
-        }
-        // 否则读取未压缩文件给客户端
-        else {
-            res.writeHead(200);
-            combinedStreams.pipe(res);
+            resEmitter.emit('success', 304, {mtime, ino, size}, data[0].fileName, null);
+        } else {
+            // 生成多文件合并后的可读流
+            let combinedStreams = combineFileStreams(data.map(t => t.fileName));
+            resEmitter.emit('success', 200, {mtime, ino, size}, data[0].fileName, combinedStreams);
         }
     }
 
@@ -257,29 +267,5 @@ function serverHandler(req, res) {
         // 设置MIME类型
         var ext = path.extname(fileName);
         res.setHeader("Content-Type", mime.lookup(ext));
-    }
-
-    /**
-     * 错误处理
-     * @param code
-     */
-    function errorHandler(code) {
-        res.writeHead(code, {
-            'Content-Type': 'text/plain'
-        });
-        switch (code) {
-            case 400:
-                res.end('400 Bad Request');
-                break;
-            case 403:
-                res.end('403 Forbidden');
-                break;
-            case 404:
-                res.end('404 Not Found');
-                break;
-            case 500:
-                res.end('500 Internal Server Error');
-                break;
-        }
     }
 }
