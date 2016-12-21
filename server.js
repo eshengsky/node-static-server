@@ -15,6 +15,7 @@ const cluster = require('cluster'),
     path = require('path'),
     {PassThrough} = require('stream'),
     EventEmitter = require('events'),
+    util = require('util'),
     zlib = require("zlib"),
     crypto = require("crypto"),
     mime = require('mime'),
@@ -38,11 +39,13 @@ if (cluster.isMaster) {
  * @constructor
  */
 function serverHandler(req, res) {
-    class ResEmitter extends EventEmitter {
-    }
+    // 响应事件发射器
+    class ResEmitter {}
+    util.inherits(ResEmitter, EventEmitter);
     const resEmitter = new ResEmitter();
 
-    resEmitter.on('error', (code) => {
+    // 错误监听器
+    resEmitter.on('error', code => {
         res.writeHead(code, {
             'Content-Type': 'text/plain'
         });
@@ -62,10 +65,11 @@ function serverHandler(req, res) {
         }
     });
 
+    // 成功监听器
     resEmitter.on('success', (code, stats, fileName, rs) => {
+        setHeaders(stats, fileName);
         switch (code) {
             case 200:
-                setHeaders(stats, fileName);
                 let ext = path.extname(fileName);
                 var enableGzipFile = config.gzipTypes.test(ext);
                 // 如果文件支持gzip压缩则压缩后发给客户端
@@ -81,7 +85,6 @@ function serverHandler(req, res) {
                 }
                 break;
             case 304:
-                setHeaders(stats, fileName);
                 res.writeHead(304);
                 res.end();
                 break;
