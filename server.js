@@ -128,7 +128,7 @@ function serverHandler(req, res) {
 
         let promises = pathNames.map(item => getSingleFileStatus(item));
         Promise.all(promises).then(data => {
-            handleMultiFiles(data, isAllJs ? '.js' : '.css');
+            handleMultiFiles(data);
         }, error => resEmitter.emit('error', error));
     }
     // 单文件请求
@@ -191,10 +191,9 @@ function serverHandler(req, res) {
     /**
      * 处理多文件请求
      * @param data
-     * @param ext
      * @returns {*}
      */
-    function handleMultiFiles(data, ext) {
+    function handleMultiFiles(data) {
         // 得到一个stats数组
         let multiStats = data.map(item => item.stats);
         // 生成多文件情况下的ino, size
