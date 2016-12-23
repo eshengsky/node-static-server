@@ -42,7 +42,7 @@ describe('node-static-server测试脚本', () => {
         var configPath = path.join(__dirname, './configForTest.js');
         child = spawn('node', ['server.js', configPath]);
         child.stderr.on('data', err => console.error(err.toString()));
-        child.stdout.on('data', data => done())
+        child.stdout.once('data', data => done())
     });
 
     after(() => {

@@ -24,7 +24,8 @@ const cluster = require('cluster'),
 
 if (cluster.isMaster) {
     for (let i = 0; i < numCPUs; i++) {
-        cluster.fork();
+        let worker = cluster.fork();
+        console.info(`Worker ${worker.process.pid} started!`);
     }
     console.info(`Static server is running at http://${config.host}:${config.port}`);
 } else {
